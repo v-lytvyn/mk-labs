@@ -1,0 +1,136 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+
+const char* ssid = "Galaxy S23 FE";
+const char* password = "d944ubbarfmhrk4";
+
+ESP8266WebServer server(80);
+
+const uint8_t LED_PINS[] = {2, 12, 13}; 
+const uint8_t BUTTON_PIN = 0;           
+
+volatile uint32_t lastInterruptTime = 0;
+const uint8_t debounceDelay = 50;
+volatile bool isPressed = false;
+volatile bool buttonTriggered = false;
+
+uint8_t currentMode = 0;
+uint8_t currentStep = 0;
+uint32_t lastLedTime = 0;
+const uint16_t ledInterval = 300;
+
+const uint8_t mode0_steps[] = {0, 1, 2};
+const uint8_t mode1_steps[] = {2, 1, 0, 1};
+
+void IRAM_ATTR handleButtonInterrupt() {
+  uint32_t currentTime = millis();
+  
+  if ((currentTime - lastInterruptTime) > debounceDelay) {
+    uint8_t reading = digitalRead(BUTTON_PIN);
+    
+    if (reading == LOW) { 
+      isPressed = true;
+    } else { 
+      if (isPressed) {
+        buttonTriggered = true;
+        isPressed = false;
+      }
+    }
+    lastInterruptTime = currentTime;
+  }
+}
+
+const char MAIN_page[] PROGMEM = R"=====(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP8266 LED Control</title>
+  <style>
+    body { text-align: center; font-family: sans-serif; margin-top: 50px; background-color: #1e1e1e; color: #fff;}
+    .btn { background-color: #007BFF; color: white; padding: 25px 50px; font-size: 24px; border: none; border-radius: 12px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); transition: 0.1s;}
+    .btn:active { background-color: #0056b3; transform: translateY(4px); box-shadow: 0 1px 2px rgba(0,0,0,0.3);}
+  </style>
+</head>
+<body>
+  <h2>Algorithm Changer</h2>
+  <button class="btn" onclick="toggleSequence()">Change algorithm</button>
+  <script>
+    function toggleSequence() {
+      fetch('/toggle');
+    }
+  </script>
+</body>
+</html>
+)=====";
+
+void handleRoot() {
+  server.send(200, "text/html", MAIN_page);
+}
+
+void handleToggle() {
+  buttonTriggered = true;
+  server.send(200, "text/plain", "OK");
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  for (uint8_t i = 0; i < 3; i++) {
+    pinMode(LED_PINS[i], OUTPUT);
+    digitalWrite(LED_PINS[i], LOW);
+  }
+  
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), handleButtonInterrupt, CHANGE);
+
+  Serial.println("\nConnecting to WiFi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected! Open this IP in browser: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", handleRoot);
+  server.on("/toggle", handleToggle);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+
+  if (buttonTriggered) {
+    currentMode = !currentMode;
+    currentStep = 0;
+    
+    for (uint8_t i = 0; i < 3; i++) {
+      digitalWrite(LED_PINS[i], LOW);
+    }
+    
+    buttonTriggered = false;
+    Serial.print("Changed to mode: ");
+    Serial.println(currentMode);
+  }
+
+  if (millis() - lastLedTime >= ledInterval) {
+    lastLedTime = millis();
+
+    for (uint8_t i = 0; i < 3; i++) {
+      digitalWrite(LED_PINS[i], LOW);
+    }
+
+    if (currentMode == 0) {
+      digitalWrite(LED_PINS[mode0_steps[currentStep]], HIGH);
+      currentStep++;
+      if (currentStep >= 3) currentStep = 0;
+    } else {
+      digitalWrite(LED_PINS[mode1_steps[currentStep]], HIGH);
+      currentStep++;
+      if (currentStep >= 4) currentStep = 0;
+    }
+  }
+}
